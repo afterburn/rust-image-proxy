@@ -4,10 +4,10 @@ use std::{ fs::File, io::Write };
 pub fn write_file(
   bytes: &Bytes,
   path: String
-) -> Result<String, std::io::Error> {
+) -> anyhow::Result<(), std::io::Error> {
   let mut file = File::create(path).unwrap();
   match file.write_all(&bytes) {
-    Ok(_) => Ok("".to_owned()),
+    Ok(_) => Ok(()),
     Err(err) => Err(err),
   }
 }
