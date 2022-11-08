@@ -5,7 +5,10 @@ use actix_web::{
 };
 use image::{imageops::FilterType, DynamicImage, EncodableLayout};
 use serde::Deserialize;
-use std::{fs::File, io::Write};
+use std::{
+    fs::File,
+    io::{BufReader, Read, Write},
+};
 use webp::Encoder;
 
 #[derive(Debug, Deserialize)]
@@ -18,43 +21,64 @@ pub struct ImageRequest {
 #[get("/")]
 async fn proxy_image(req: HttpRequest, params: web::Query<ImageRequest>) -> HttpResponse {
     // Generate id
-    let id = "abc123".to_owned();
+    let hash = format!("{:?}", md5::compute(params.url.clone()));
 
-    // Download image
-    let bytes = match get_image_bytes(params.url.clone()).await {
-        Ok(v) => v,
-        Err(_) => todo!(),
-    };
-
-    // Load image into memory.
-    let mut img = image::load_from_memory(&bytes).unwrap();
-
-    // Resize
-    if params.w.is_some() || params.h.is_some() {
-        let original_width = img.width() as f32;
-        let original_height = img.height() as f32;
-
-        let width: u32;
-        let height: u32;
-
-        if params.w.is_some() && params.h.is_none() {
-            let aspect_ratio = original_height / original_width;
-            width = params.w.unwrap();
-            height = (width as f32 * aspect_ratio).ceil() as u32;
-        } else if params.w.is_none() && params.h.is_some() {
-            let aspect_ratio = original_width / original_height;
-            height = params.h.unwrap();
-            width = (height as f32 * aspect_ratio).ceil() as u32;
-        } else {
-            width = params.w.unwrap();
-            height = params.h.unwrap();
-        }
-
-        img = DynamicImage::resize_exact(&img, width, height, FilterType::Gaussian);
+    // Attempt to load image from disk, otherwise download and store.
+    let download_path = format!("./downloads/{}", hash);
+    let bytes: Bytes;
+    if std::path::Path::new(&download_path).exists() {
+        // Read image from disk.
+        let f = File::open(download_path).unwrap();
+        let mut reader = BufReader::new(f);
+        let mut buffer = Vec::new();
+        reader.read_to_end(&mut buffer).unwrap();
+        bytes = Bytes::from(buffer);
+    } else {
+        // Download image and store to disk.
+        bytes = match get_image_bytes(params.url.clone()).await {
+            Ok(bytes) => bytes,
+            Err(_) => todo!(),
+        };
+        store_to_disk(&bytes, format!("./downloads/{}", hash)).unwrap();
     }
 
-    // Convert to webp
-    let webp_path = image_to_webp(img, format!("./tmp/{}.webp", id)).unwrap();
+    // Convert bytes to DynamicImage.
+    let mut img = image::load_from_memory(&bytes).unwrap();
+    let original_width = img.width() as f32;
+    let original_height = img.height() as f32;
+
+    // Create identifier for the webp image.
+    let ws = params.w.unwrap_or(0);
+    let hs = params.h.unwrap_or(0);
+    let identifier = format!("{}.{}x{}", hash, ws, hs);
+    let mut webp_path = format!("./webp/{}.webp", identifier);
+
+    // Check to see if we need to resize or if its already available in cache.
+    if !std::path::Path::new(&webp_path).exists() {
+        // Perform resize if it is desired.
+        if params.w.is_some() || params.h.is_some() {
+            let width: u32;
+            let height: u32;
+
+            if params.w.is_some() && params.h.is_none() {
+                let aspect_ratio = original_height / original_width;
+                width = params.w.unwrap();
+                height = (width as f32 * aspect_ratio).ceil() as u32;
+            } else if params.w.is_none() && params.h.is_some() {
+                let aspect_ratio = original_width / original_height;
+                height = params.h.unwrap();
+                width = (height as f32 * aspect_ratio).ceil() as u32;
+            } else {
+                width = params.w.unwrap();
+                height = params.h.unwrap();
+            }
+
+            img = DynamicImage::resize_exact(&img, width, height, FilterType::Gaussian);
+        }
+
+        // Convert to webp
+        webp_path = image_to_webp(img, webp_path).unwrap();
+    }
 
     // Serve webp
     let file = actix_files::NamedFile::open_async(webp_path).await.unwrap();
@@ -63,9 +87,14 @@ async fn proxy_image(req: HttpRequest, params: web::Query<ImageRequest>) -> Http
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    match create_dir("./tmp".to_owned()) {
+    match create_dir("./downloads".to_owned()) {
         Ok(_) => {}
-        Err(_) => panic!("Could not create tmp directory."),
+        Err(_) => panic!("Could not create downloads directory."),
+    };
+
+    match create_dir("./webp".to_owned()) {
+        Ok(_) => {}
+        Err(_) => panic!("Could not create webp directory."),
     };
 
     HttpServer::new(|| App::new().service(proxy_image))
@@ -88,6 +117,14 @@ fn image_to_webp(img: DynamicImage, webp_path: String) -> Result<String, std::io
     let mut webp_image = File::create(webp_path.to_string()).unwrap();
     match webp_image.write_all(encoded_webp.as_bytes()) {
         Ok(_) => Ok(webp_path),
+        Err(err) => Err(err),
+    }
+}
+
+fn store_to_disk(bytes: &Bytes, path: String) -> Result<String, std::io::Error> {
+    let mut file = File::create(path).unwrap();
+    match file.write_all(&bytes) {
+        Ok(_) => Ok("".to_owned()),
         Err(err) => Err(err),
     }
 }
