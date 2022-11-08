@@ -21,10 +21,15 @@ PORT=<your-desired-port>
 ```
 GET /?url=https%3A%2F%2Fplacekitten.com%2F800%2F600&w=300
 ```
+
 | Param | Description                     |
 |-------|---------------------------------|
 | url   | encoded url of the target image |
 | w     | desired width for the result    |
 | h     | desired height for the result   |
 
-omitting either `w` or `h` will preserve original aspect ratio of the image.
+Omitting either `w` or `h` will preserve original aspect ratio of the image.
+
+Result:
+
+![image](https://user-images.githubusercontent.com/10757768/200688034-4ad18c6c-a905-4167-a393-69908fd532d0.png)
