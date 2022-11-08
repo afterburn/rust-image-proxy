@@ -1,15 +1,41 @@
+mod fs;
+
+use crate::fs::write_file;
 use actix_web::{
     get,
     web::{self, Bytes},
     App, HttpRequest, HttpResponse, HttpServer,
 };
+use dotenv::dotenv;
+use fs::mkdir;
 use image::{imageops::FilterType, DynamicImage, EncodableLayout};
 use serde::Deserialize;
+use std::env;
 use std::{
     fs::File,
     io::{BufReader, Read, Write},
 };
 use webp::Encoder;
+
+extern crate dotenv;
+
+// Load image from url and place in memory.
+async fn get_image_bytes(url: String) -> anyhow::Result<Bytes> {
+    let bytes = reqwest::get(url).await?.bytes().await?;
+    return Ok(bytes);
+}
+
+// Convert bytes into webp format.
+fn image_to_webp(img: DynamicImage, webp_path: String) -> Result<String, std::io::Error> {
+    let encoder = Encoder::from_image(&img).unwrap();
+    let encoded_webp = encoder.encode(65f32);
+
+    let mut webp_image = File::create(webp_path.to_string()).unwrap();
+    match webp_image.write_all(encoded_webp.as_bytes()) {
+        Ok(_) => Ok(webp_path),
+        Err(err) => Err(err),
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub struct ImageRequest {
@@ -39,13 +65,8 @@ async fn proxy_image(req: HttpRequest, params: web::Query<ImageRequest>) -> Http
             Ok(bytes) => bytes,
             Err(_) => todo!(),
         };
-        store_to_disk(&bytes, format!("./downloads/{}", hash)).unwrap();
+        write_file(&bytes, format!("./downloads/{}", hash)).unwrap();
     }
-
-    // Convert bytes to DynamicImage.
-    let mut img = image::load_from_memory(&bytes).unwrap();
-    let original_width = img.width() as f32;
-    let original_height = img.height() as f32;
 
     // Create identifier for the webp image.
     let ws = params.w.unwrap_or(0);
@@ -55,6 +76,11 @@ async fn proxy_image(req: HttpRequest, params: web::Query<ImageRequest>) -> Http
 
     // Check to see if we need to resize or if its already available in cache.
     if !std::path::Path::new(&webp_path).exists() {
+        // Convert bytes to DynamicImage.
+        let mut img = image::load_from_memory(&bytes).unwrap();
+        let original_width = img.width() as f32;
+        let original_height = img.height() as f32;
+
         // Perform resize if it is desired.
         if params.w.is_some() || params.h.is_some() {
             let width: u32;
@@ -87,49 +113,14 @@ async fn proxy_image(req: HttpRequest, params: web::Query<ImageRequest>) -> Http
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    match create_dir("./downloads".to_owned()) {
-        Ok(_) => {}
-        Err(_) => panic!("Could not create downloads directory."),
-    };
+    dotenv().ok();
 
-    match create_dir("./webp".to_owned()) {
-        Ok(_) => {}
-        Err(_) => panic!("Could not create webp directory."),
-    };
+    mkdir("./downloads".to_owned()).unwrap();
+    mkdir("./webp".to_owned()).unwrap();
 
+    let port: u16 = env::var("PORT").unwrap().parse().unwrap();
     HttpServer::new(|| App::new().service(proxy_image))
-        .bind(("127.0.0.1", 8080))?
+        .bind(("127.0.0.1", port))?
         .run()
         .await
-}
-
-// Load image from url and place in memory.
-async fn get_image_bytes(url: String) -> anyhow::Result<Bytes> {
-    let bytes = reqwest::get(url).await?.bytes().await?;
-    return Ok(bytes);
-}
-
-// Convert bytes into webp format.
-fn image_to_webp(img: DynamicImage, webp_path: String) -> Result<String, std::io::Error> {
-    let encoder = Encoder::from_image(&img).unwrap();
-    let encoded_webp = encoder.encode(65f32);
-
-    let mut webp_image = File::create(webp_path.to_string()).unwrap();
-    match webp_image.write_all(encoded_webp.as_bytes()) {
-        Ok(_) => Ok(webp_path),
-        Err(err) => Err(err),
-    }
-}
-
-fn store_to_disk(bytes: &Bytes, path: String) -> Result<String, std::io::Error> {
-    let mut file = File::create(path).unwrap();
-    match file.write_all(&bytes) {
-        Ok(_) => Ok("".to_owned()),
-        Err(err) => Err(err),
-    }
-}
-
-fn create_dir(dir_path: String) -> anyhow::Result<()> {
-    std::fs::create_dir_all(dir_path)?;
-    Ok(())
 }
