@@ -9,7 +9,7 @@ A simple image proxy built with [Actix Web](https://actix.rs/).
 ### How it works
 On first hit images are downloaded via [reqwest](https://github.com/seanmonstar/reqwest) and stored on disk. Subsequent hits will be served directly from disk.<br>
 Image conversion is achieved through [libwebp](https://github.com/webmproject/libwebp) via the Rust implementation [webp](https://github.com/jaredforth/webp).<br>
-Resizing works via [image](https://github.com/image-rs/image).
+Resizing works via the [image](https://github.com/image-rs/image) crate.
 
 ### Configuration
 ```
